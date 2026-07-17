@@ -40,7 +40,7 @@ export default function Home() {
     window.speechSynthesis.cancel();
 
     const speech = new SpeechSynthesisUtterance(text);
-    speech.lang = "az-AZ";
+   speech.lang = "tr-TR";
     speech.rate = 0.95;
     speech.pitch = 1;
 
