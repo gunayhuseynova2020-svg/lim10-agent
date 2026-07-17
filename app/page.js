@@ -10,28 +10,110 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [history, setHistory] = useState([]);
+  const [voices, setVoices] = useState([]);
+
   const recognitionRef = useRef(null);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("agent-history");
-      if (saved) setHistory(JSON.parse(saved));
+      const savedHistory = localStorage.getItem("agent-history");
+
+      if (savedHistory) {
+        setHistory(JSON.parse(savedHistory));
+      }
     } catch {
       localStorage.removeItem("agent-history");
+    }
+
+    function loadVoices() {
+      if (!window.speechSynthesis) return;
+
+      const availableVoices = window.speechSynthesis.getVoices();
+      setVoices(availableVoices);
+    }
+
+    loadVoices();
+
+    if (window.speechSynthesis) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
     }
 
     return () => {
       recognitionRef.current?.stop();
       window.speechSynthesis?.cancel();
+
+      if (window.speechSynthesis) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
     };
   }, []);
 
   function saveHistory(nextHistory) {
     setHistory(nextHistory);
+
     localStorage.setItem(
       "agent-history",
       JSON.stringify(nextHistory)
     );
+  }
+
+  function detectLanguage(text) {
+    const cleanText = text.toLowerCase();
+
+    const azerbaijaniLetters = /[əğıöüşç]/;
+    const turkishLetters = /[ğışçöü]/;
+
+    const englishWords =
+      /\b(the|and|is|are|what|how|please|hello|thanks|can|could|would)\b/i;
+
+    if (azerbaijaniLetters.test(cleanText)) {
+      return "az-AZ";
+    }
+
+    if (englishWords.test(cleanText)) {
+      return "en-US";
+    }
+
+    if (turkishLetters.test(cleanText)) {
+      return "tr-TR";
+    }
+
+    return "az-AZ";
+  }
+
+  function findBestVoice(language) {
+    if (!voices.length) return null;
+
+    const exactVoice = voices.find(
+      (voice) =>
+        voice.lang.toLowerCase() === language.toLowerCase()
+    );
+
+    if (exactVoice) return exactVoice;
+
+    const languagePrefix = language
+      .split("-")[0]
+      .toLowerCase();
+
+    const sameLanguageVoice = voices.find((voice) =>
+      voice.lang.toLowerCase().startsWith(languagePrefix)
+    );
+
+    if (sameLanguageVoice) return sameLanguageVoice;
+
+    if (language === "az-AZ") {
+      const fallbackVoice =
+        voices.find((voice) =>
+          voice.lang.toLowerCase().startsWith("tr")
+        ) ||
+        voices.find((voice) =>
+          voice.lang.toLowerCase().startsWith("en")
+        );
+
+      if (fallbackVoice) return fallbackVoice;
+    }
+
+    return voices.find((voice) => voice.default) || voices[0];
   }
 
   function speakAnswer(text) {
@@ -39,14 +121,28 @@ export default function Home() {
 
     window.speechSynthesis.cancel();
 
-    const speech = new SpeechSynthesisUtterance(text);
-   speech.lang = "tr-TR";
-    speech.rate = 0.95;
-    speech.pitch = 1;
+    const language = detectLanguage(text);
+    const selectedVoice = findBestVoice(language);
 
-    speech.onstart = () => setSpeaking(true);
-    speech.onend = () => setSpeaking(false);
-    speech.onerror = () => setSpeaking(false);
+    const speech = new SpeechSynthesisUtterance(text);
+
+    speech.lang = selectedVoice?.lang || language;
+    speech.voice = selectedVoice || null;
+    speech.rate = 0.92;
+    speech.pitch = 1;
+    speech.volume = 1;
+
+    speech.onstart = () => {
+      setSpeaking(true);
+    };
+
+    speech.onend = () => {
+      setSpeaking(false);
+    };
+
+    speech.onerror = () => {
+      setSpeaking(false);
+    };
 
     window.speechSynthesis.speak(speech);
   }
@@ -73,6 +169,8 @@ export default function Home() {
       return;
     }
 
+    stopSpeaking();
+
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
 
@@ -80,13 +178,21 @@ export default function Home() {
     recognition.interimResults = false;
     recognition.continuous = false;
 
-    recognition.onstart = () => setListening(true);
-    recognition.onend = () => setListening(false);
+    recognition.onstart = () => {
+      setListening(true);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+    };
 
     recognition.onerror = (event) => {
       setListening(false);
 
-      if (event.error !== "no-speech") {
+      if (
+        event.error !== "no-speech" &&
+        event.error !== "aborted"
+      ) {
         alert("Səs tanınmadı. Yenidən cəhd et.");
       }
     };
@@ -108,9 +214,9 @@ export default function Home() {
 
     if (!cleanTask || loading) return;
 
+    stopSpeaking();
     setLoading(true);
     setAnswer("");
-    stopSpeaking();
 
     try {
       const response = await fetch("/api/agent", {
@@ -156,31 +262,34 @@ export default function Home() {
       saveHistory(nextHistory);
       setTask("");
     } catch (error) {
-      const message =
+      const errorMessage =
         error instanceof Error
           ? error.message
           : "Naməlum xəta baş verdi.";
 
-      setAnswer(`Xəta: ${message}`);
+      setAnswer(`Xəta: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
   }
 
   function clearHistory() {
+    stopSpeaking();
     saveHistory([]);
   }
 
   return (
     <main className="shell">
       <section className="card">
-        <div className="badge">LIM10 PERSONAL AGENT</div>
+        <div className="badge">
+          LIM10 PERSONAL AGENT
+        </div>
 
         <h1>Lim10, mənə kömək et</h1>
 
         <p className="subtitle">
-          Yaz və ya danış. Lim10 cavab hazırlayacaq və
-          onu səslə oxuyacaq.
+          Azərbaycan, türk və ya ingilis dilində yaz və
+          danış. Lim10 cavabı uyğun dildə səsləndirəcək.
         </p>
 
         <form onSubmit={submitTask}>
@@ -189,7 +298,7 @@ export default function Home() {
             onChange={(event) =>
               setTask(event.target.value)
             }
-            placeholder="Məsələn: Bu gün etməli olduğum işləri planlaşdır..."
+            placeholder="Məsələn: Bu gün üçün plan hazırla..."
             rows={5}
             disabled={loading}
           />
